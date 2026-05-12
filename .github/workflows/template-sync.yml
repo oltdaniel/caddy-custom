@@ -1,0 +1,140 @@
+name: Template sync
+
+on:
+  schedule:
+    # Weekly — Mondays at 09:00 UTC. Template changes are infrequent and
+    # don't need daily checking like the upstream-release scan does.
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: template-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  template-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Read template config
+        id: cfg
+        run: |
+          enabled=$(yq -r '.template.enabled // false' build.yaml)
+          repo=$(yq -r '.template.github.repo // ""' build.yaml)
+          branch=$(yq -r '.template.github.branch // "main"' build.yaml)
+          sync_branch=$(yq -r '.template.branch_name // "template-sync"' build.yaml)
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "sync_branch=$sync_branch" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if disabled or we ARE the template
+        id: gate
+        env:
+          ENABLED: ${{ steps.cfg.outputs.enabled }}
+          TPL_REPO: ${{ steps.cfg.outputs.repo }}
+        run: |
+          if [[ "$ENABLED" != "true" ]]; then
+            echo "Template sync disabled in build.yaml."
+            echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [[ -z "$TPL_REPO" ]]; then
+            echo "template.github.repo is empty — nothing to sync from."
+            echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Case-insensitive match: GitHub owner/repo names are not
+          # case-sensitive when resolving, so 'Foo/Bar' must match 'foo/bar'.
+          if [[ "${GITHUB_REPOSITORY,,}" == "${TPL_REPO,,}" ]]; then
+            echo "This repo IS the template (${GITHUB_REPOSITORY}); skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install missing packages
+        run: sudo apt-get update && sudo apt-get install rsync -y
+
+      - name: Clone upstream template
+        if: steps.gate.outputs.run == 'true'
+        env:
+          TPL_REPO: ${{ steps.cfg.outputs.repo }}
+          TPL_BRANCH: ${{ steps.cfg.outputs.branch }}
+        run: |
+          git clone --depth=1 --branch="$TPL_BRANCH" \
+            "https://github.com/${TPL_REPO}.git" /tmp/template
+          rm -rf /tmp/template/.git
+
+      - name: Mirror template into working tree
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          # rsync --delete with an explicit denylist:
+          #   - .git keeps our history
+          #   - build.yaml / README.md are user-owned
+          #   - dist/ + lib/tools.pins.sh are auto-update territory
+          # Everything else under the template's tracked paths gets mirrored
+          # verbatim. --delete removes locally-present files that the
+          # template no longer ships, so deprecated scripts/tests/workflows
+          # disappear cleanly on the downstream side.
+          rsync -a --delete \
+            --exclude=/.git \
+            --exclude=/build.yaml \
+            --exclude=/README.md \
+            --exclude=/dist \
+            --exclude=/lib/tools.pins.sh \
+            /tmp/template/ ./
+
+      - name: Detect drift
+        if: steps.gate.outputs.run == 'true'
+        id: drift
+        run: |
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "No drift from template."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Template sync"
+              echo ""
+              echo "Drift detected against \`${{ steps.cfg.outputs.repo }}@${{ steps.cfg.outputs.branch }}\`."
+              echo ""
+              echo "### Files changed"
+              echo ""
+              echo '```'
+              git status --short
+              echo '```'
+            } > /tmp/report.md
+          fi
+
+      - name: Open or refresh sync PR
+        if: steps.gate.outputs.run == 'true' && steps.drift.outputs.changed == 'true'
+        env:
+          BRANCH: ${{ steps.cfg.outputs.sync_branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Reset the sync branch from main on every run so the PR diff is
+          # always (current main) -> (single template-sync commit) — no
+          # accumulated history, no merge conflicts when main moves on.
+          git checkout -B "$BRANCH"
+          git add -A
+          git commit -m "chore(template-sync): pull from ${{ steps.cfg.outputs.repo }}@${{ steps.cfg.outputs.branch }}"
+          git push origin "$BRANCH" --force
+
+          pr=$(gh pr list --head "$BRANCH" --state open --json number -q '.[0].number' || echo "")
+          if [[ -z "$pr" ]]; then
+            gh pr create --head "$BRANCH" --base main \
+              --title "Template sync from ${{ steps.cfg.outputs.repo }}" \
+              --body-file /tmp/report.md
+          else
+            gh pr edit "$pr" --body-file /tmp/report.md
+            gh pr comment "$pr" --body "Refreshed at $(date -u +%Y-%m-%dT%H:%MZ). Branch force-pushed; current report is in the PR description above."
+          fi

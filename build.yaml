@@ -1,0 +1,274 @@
+# Build configuration for custom Caddy packaging.
+# yaml-language-server: $schema=https://json-schema.org/draft-07/schema
+
+caddy:
+  # Upstream Caddy version that xcaddy will build.
+  # Accepted values:
+  #   "latest"       — resolved at build time to the most recent release
+  #                    tag from caddyserver/caddy on GitHub
+  #   "2.11.2"       — explicit semver (with or without leading "v")
+  #   "2.12.0-beta1" — pre-release tags are allowed
+  # Branches, commit SHAs, and "nightly" are NOT supported because the
+  # package version (deb / apk / Docker tag) needs to be a sortable semver.
+  # Pin an explicit version if reproducibility matters; "latest" can move
+  # between successive workflow runs.
+  version: "2.11.0"
+  # Suffix folded into the *package* version (not the upstream version
+  # consumed by xcaddy), so the same Caddy rebuilt with different plugins
+  # gets a distinct package/image version. Appended after a dot — e.g.
+  # "20260508.42" produces "2.11.2.20260508.42". Safe in deb, apk, rpm, and
+  # as a Docker tag.
+  #   ""      — no suffix; pkg_version equals caddy.version
+  #   "auto"  — <YYYYMMDD>.<git-commit-count> (default). Same commit → same
+  #             version, so release.sh check can skip already-built revisions.
+  #             CI must check the repo with full history (fetch-depth: 0).
+  #   <other> — literal value, used verbatim (digits/letters/dots only).
+  version_suffix: "auto"
+# xcaddy configuration. Plugins, replacements, and flags are forwarded verbatim.
+# Note: the xcaddy binary itself is pinned in lib/tools.pins.sh (version +
+# SHA256) alongside yq and nfpm, not here. Same pattern as the other build
+# tools so `check-updates.sh --apply` updates the version and hash atomically.
+xcaddy:
+  # Plugins (`--with` arguments). Each must include a version (`@vX.Y.Z` or
+  # `@<commit-sha>`); bare module paths are rejected by the build guard. See
+  # README for the pinning policy.
+  plugins:
+    - github.com/caddy-dns/cloudflare@v0.2.4
+    # - github.com/mholt/caddy-l4@v0.1.0
+    # - github.com/caddyserver/replace-response@v0.0.4
+  # Module-level replacements (`--replace` arguments).
+  replacements: []
+  # - github.com/caddyserver/caddy/v2=../caddy
+  # Extra flags forwarded to `xcaddy build` (rare; usually empty).
+  extra_flags: []
+  # Build tags (forwarded as -tags). Empty by default.
+  build_tags: ""
+  # Skip post-build cleanup (useful for caching). 0 or 1.
+  skip_cleanup: "0"
+# nfpm package metadata applied to deb and apk outputs.
+package:
+  name: "caddy-custom"
+  description: |
+    Caddy. Fast, multi-platform web server with automatic HTTPS.
+    Custom build with selected plugins.
+  maintainer: "Local Build <root@localhost>"
+  vendor: "Custom Caddy Build"
+  homepage: "https://caddyserver.com"
+  license: "Apache-2.0"
+  section: "web"
+  priority: "optional"
+  # System dependencies.
+  depends_deb:
+    - libc6
+  depends_apk:
+    - ca-certificates
+  # Supplementary packages built alongside the main one.
+  conflicts: []
+  provides:
+    - webserver
+# Output formats to produce. Set to false to skip.
+formats:
+  binary: true
+  deb: true
+  apk: true
+  docker: true
+# Docker image options. Only used when formats.docker is true.
+docker:
+  # Base image is intentionally tag-pinned (not digest-pinned). The Dockerfile
+  # runs `apk add` from alpine's repos, which floats independently of the base
+  # digest, so a digest pin would be misleading. Container freshness is
+  # achieved by the monthly Patch-Tuesday rebuild in CI, not by pinning here.
+  base_image: "alpine:3.23"
+  # Repository (without tag). May be local-only (e.g. "caddy-custom").
+  image: "caddy-custom"
+  # Tags appended to the image name. The Caddy version is always added too.
+  tags:
+    - "latest"
+  # If true, push the resulting manifest to a registry (requires login).
+  push: false
+  # If true, build a multi-arch manifest. If false, build per-arch local images
+  # tagged with the architecture suffix.
+  multiarch_manifest: true
+# Template-sync behavior. Consumed by .github/workflows/template-sync.yml
+# and .forgejo/workflows/template-sync.yml. Pulls build scripts, workflows,
+# templates, tests, and lib/ (logic only) from the upstream template repo
+# and opens a rolling PR with any drift. The workflows auto-skip when the
+# current repo IS the template (so the canonical repo never syncs itself).
+#
+# Files NOT replaced by the sync (always preserved locally):
+#   - build.yaml          (user config)
+#   - README.md           (user-customised)
+#   - dist/               (managed by auto-update)
+#   - lib/tools.pins.sh   (managed by auto-update)
+# Everything else under the tracked paths is mirrored from upstream.
+template:
+  # Set to false to disable both template-sync workflows entirely.
+  enabled: true
+  github:
+    # Upstream template repo on GitHub. Self-check: if GITHUB_REPOSITORY
+    # equals this value, the workflow exits without doing anything.
+    repo: "oltdaniel/caddy-custom"
+    branch: "main"
+  forgejo:
+    # Forgejo mirror of the GitHub template (set up via Forgejo's built-in
+    # repo mirroring). The Forgejo workflow pulls from here so the sync
+    # works on instances without GitHub egress.
+    url: "https://codeberg.org"
+    repo: "oltdaniel/caddy-custom"
+    branch: "main"
+  # Branch used for the rolling sync PR. Force-pushed on every run so the
+  # PR diff always reflects current upstream; intermediate states are
+  # captured in PR comments.
+  branch_name: "template-sync"
+# Auto-update behavior. Consumed by .github/workflows/auto-update.yml
+# and .forgejo/workflows/auto-update.yml. The Phase-2 checker script
+# (./check-updates.sh) is mode-agnostic; only the workflow reacts to this.
+auto_update:
+  # 'pr'   — open or update a rolling PR on the auto-update branch.
+  # 'auto' — commit straight to main; the existing release pipeline runs.
+  mode: "pr"
+  # Branch used for the rolling PR. Force-pushed on every update so the
+  # PR diff always reflects current build.yaml; intermediate states are
+  # captured in PR comments.
+  branch: "auto-update"
+# Upstream dist content tracked under dist/. check-updates.sh fetches each
+# tracked file from <repo_url>@<branch>, diffs against the local copy, and on
+# --apply rewrites changed files plus bumps the commit pin. The pin captures
+# the upstream revision the local files were last synced from — same role as
+# the version pins above, applied to file content instead of binaries.
+#
+# Both sources are GitHub repositories. The aports entry uses the official
+# GitHub mirror of gitlab.alpinelinux.org/alpine/aports so a single API
+# (raw.githubusercontent.com + api.github.com) handles both. The `path:` field
+# scopes the latest-commit lookup to a subdirectory, so unrelated aports
+# churn does not trigger a pin bump.
+dist:
+  # Source for systemd units, default Caddyfile, welcome page, and the
+  # deb install/remove scripts.
+  caddy_dist:
+    repo_url: "https://github.com/caddyserver/dist"
+    branch: "master"
+    commit: "836ff569ed513837874a3aa5441f6719622bb08c"
+  # Source for the OpenRC init script and the apk pre-install hook.
+  aports:
+    repo_url: "https://github.com/alpinelinux/aports"
+    branch: "master"
+    path: "community/caddy"
+    commit: "65ea66742129a8a7b4941bf9b582a939347c5c2a"
+# Package registry settings used by ./release.sh.
+# Auth tokens must come from environment variables — never hard-code them here.
+#
+# Both providers publish a Release tagged v<pkg_version> with binary/deb/apk
+# attached as assets. The forgejo backend additionally uploads to its native
+# package registries (generic/debian/alpine/container); the github backend
+# additionally pushes the docker image to ghcr.io.
+#
+# Token scopes:
+#   forgejo (FORGEJO_TOKEN): write:package + write:repository
+#   github  (GITHUB_TOKEN):  contents: write + packages: write
+#
+# The active provider can be overridden at runtime via RELEASE_PROVIDER
+# (forgejo | github); each CI workflow sets it explicitly.
+release:
+  # Default backend when RELEASE_PROVIDER env var is unset. Either provider
+  # can be driven from the corresponding workflow regardless of this default.
+  provider: "forgejo"
+  forgejo:
+    # Base URL of the Forgejo instance (no trailing slash).
+    url: "https://codeberg.org"
+    # Owner (user or organisation) under which packages and releases live.
+    owner: "oltdaniel"
+    # Repo name for the Forgejo Release that artifacts are attached to.
+    # Leave empty to fall back to the GITHUB_REPOSITORY env var (Forgejo
+    # Actions populates this for GitHub Actions compatibility).
+    repo: "caddy-custom"
+  github:
+    # Owner / repo for the GitHub Release that artifacts are attached to.
+    # Leave both empty to fall back to the GITHUB_REPOSITORY env var
+    # (auto-set by GitHub Actions to "owner/repo").
+    owner: "oltdaniel"
+    repo: "caddy-custom"
+    # Image path pushed to ghcr.io. Defaults to docker.image when empty.
+    #
+    # Resulting URL: ghcr.io/<owner-lowercased>/<container_image>
+    #
+    # `container_image` is the entire path after the owner — it can be a
+    # single name or several "/"-separated segments. Examples (with
+    # owner "oltdaniel"):
+    #   "caddy-custom"               -> ghcr.io/oltdaniel/caddy-custom
+    #   "caddy-custom/server"        -> ghcr.io/oltdaniel/caddy-custom/server
+    #
+    # When the leading segment matches a repo under the same owner,
+    # GitHub auto-links the package to that repo (so it shows up on the
+    # repo page and inherits its visibility/permissions). The common
+    # conventions are therefore:
+    #   - top-level package whose name happens to match a repo, e.g.
+    #     "caddy-custom" with repo oltdaniel/caddy-custom -> auto-linked
+    #   - repo-scoped package, e.g. "caddy-custom/server" -> auto-linked
+    #     to the caddy-custom repo as a sub-package called "server"
+    container_image: "caddy-custom/caddy"
+  # Generic registry (Forgejo only) — per-arch binary tarballs from out/.
+  generic:
+    package_name: "caddy-custom"
+  # Debian registry (Forgejo only) — distribution/component path the .deb
+  # files land under. Ignored by the github backend (deb files are uploaded
+  # as Release assets instead).
+  deb:
+    distribution: "stable"
+    component: "main"
+  # Alpine registry (Forgejo only) — branch (e.g. "v3.23") and repository
+  # name. Ignored by the github backend.
+  apk:
+    branch: "v3"
+    repository: "caddy-custom"
+# Architectures to build. Each entry produces one binary, optionally one deb,
+# one apk, and one docker platform. Comment out architectures you do not need.
+# Field reference:
+#   name             — short label used in output paths
+#   goos / goarch    — passed to Go via env vars
+#   goarm            — only for 32-bit ARM (6 or 7); leave empty otherwise
+#   nfpm_arch        — value placed in nfpm `arch:` (Go-style: amd64/arm6/arm7/...)
+#   docker_platform  — buildx --platform value (omit to skip docker for this arch)
+architectures:
+  - name: amd64
+    goos: linux
+    goarch: amd64
+    goarm: ""
+    nfpm_arch: amd64
+    docker_platform: linux/amd64
+  - name: arm64
+    goos: linux
+    goarch: arm64
+    goarm: ""
+    nfpm_arch: arm64
+    docker_platform: linux/arm64
+# - name: armv6
+#   goos: linux
+#   goarch: arm
+#   goarm: "6"
+#   nfpm_arch: arm6
+#   docker_platform: linux/arm/v6
+# - name: armv7
+#   goos: linux
+#   goarch: arm
+#   goarm: "7"
+#   nfpm_arch: arm7
+#   docker_platform: linux/arm/v7
+# - name: ppc64le
+#   goos: linux
+#   goarch: ppc64le
+#   goarm: ""
+#   nfpm_arch: ppc64le
+#   docker_platform: linux/ppc64le
+# - name: s390x
+#   goos: linux
+#   goarch: s390x
+#   goarm: ""
+#   nfpm_arch: s390x
+#   docker_platform: linux/s390x
+# - name: riscv64
+#   goos: linux
+#   goarch: riscv64
+#   goarm: ""
+#   nfpm_arch: riscv64
+#   docker_platform: linux/riscv64

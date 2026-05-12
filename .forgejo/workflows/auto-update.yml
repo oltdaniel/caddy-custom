@@ -1,0 +1,119 @@
+name: Auto-update
+
+on:
+  schedule:
+    # Patch Tuesday — second Tuesday of the month at 08:00 UTC.
+    - cron: "0 8 8-14 * 2"
+    # Daily — catches new Caddy/plugin releases within 24h.
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: auto-update
+  cancel-in-progress: false
+
+jobs:
+  auto-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          # Explicit so manual re-runs from any other ref still rebase from main.
+          ref: main
+          fetch-depth: 0
+
+      - name: Detect run kind
+        id: kind
+        run: |
+          dom=$(date -u +%-d)
+          dow=$(date -u +%u)  # 1=Mon..7=Sun
+          if [[ "${dow}" == "2" && "${dom}" -ge 8 && "${dom}" -le 14 ]]; then
+            echo "kind=patch-tuesday" >> "$GITHUB_OUTPUT"
+          else
+            echo "kind=daily" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for updates
+        id: check
+        run: |
+          if ./check-updates.sh --apply 2>/tmp/log.txt; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          ./check-updates.sh > /tmp/report.md 2>/dev/null || true
+        continue-on-error: true
+
+      - name: Read auto_update mode
+        id: mode
+        run: |
+          mode=$(yq -r '.auto_update.mode // "pr"' build.yaml)
+          branch=$(yq -r '.auto_update.branch // "auto-update"' build.yaml)
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Apply (auto mode)
+        if: steps.check.outputs.changed == 'true' && steps.mode.outputs.mode == 'auto'
+        run: |
+          git config user.name "forgejo-actions"
+          git config user.email "noreply@forgejo.org"
+          git add build.yaml lib/tools.pins.sh dist
+          git commit -m "chore(auto-update): pin bumps (${{ steps.kind.outputs.kind }})"
+          git push origin HEAD:main
+
+      - name: Apply (PR mode)
+        if: steps.check.outputs.changed == 'true' && steps.mode.outputs.mode == 'pr'
+        env:
+          BRANCH: ${{ steps.mode.outputs.branch }}
+          FORGEJO_URL: ${{ vars.FORGEJO_URL || 'https://codeberg.org' }}
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          git config user.name "forgejo-actions"
+          git config user.email "noreply@forgejo.org"
+          # Reset the auto-update branch from main on every run so the PR diff
+          # is always (current main) -> (single bump commit) — no accumulated
+          # history, no merge conflicts when main moves on.
+          git checkout -B "$BRANCH"
+          git add build.yaml lib/tools.pins.sh dist
+          git commit -m "chore(auto-update): pin bumps (${{ steps.kind.outputs.kind }})"
+          git push origin "$BRANCH" --force
+
+          # The PR body always shows the current report; each subsequent run
+          # leaves a short timestamp-only comment so the thread doubles as a
+          # chronological log of "when did this PR get refreshed".
+          owner="${GITHUB_REPOSITORY%/*}"
+          repo="${GITHUB_REPOSITORY#*/}"
+          api_url="${FORGEJO_URL}/api/v1"
+          body_json=$(jq -Rs . < /tmp/report.md)
+
+          # Forgejo's /pulls?head=owner:branch filter triggers a UnitTypeCode
+          # access check on the head repo even when it's the same as the base
+          # repo, and fails as "Can't read pulls or can't read UnitTypeCode"
+          # on tokens without the matching unit scope. Filter client-side
+          # instead — the open-PR set is small.
+          pr_response=$(curl -s "${api_url}/repos/${owner}/${repo}/pulls?state=open" \
+            -H "Authorization: token ${FORGEJO_TOKEN}")
+          pr_number=$(echo "${pr_response}" | yq -p=json -r \
+            "((. | select(tag == \"!!seq\")) // []) | [.[] | select(.head.ref == \"${BRANCH}\")] | .[0].number // \"\"")
+
+          if [[ -z "$pr_number" ]]; then
+            curl -s -X POST \
+              -H "Authorization: token ${FORGEJO_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"title\":\"Auto-update: pin bumps\",\"body\":${body_json},\"base\":\"main\",\"head\":\"${owner}:${BRANCH}\"}" \
+              "${api_url}/repos/${owner}/${repo}/pulls"
+          else
+            curl -s -X PATCH \
+              -H "Authorization: token ${FORGEJO_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"body\":${body_json}}" \
+              "${api_url}/repos/${owner}/${repo}/pulls/${pr_number}"
+            comment_body="Refreshed at $(date -u +%Y-%m-%dT%H:%MZ) — ${{ steps.kind.outputs.kind }} run. Branch force-pushed; current report is in the PR description above."
+            comment_json=$(printf '%s' "$comment_body" | jq -Rs .)
+            curl -s -X POST \
+              -H "Authorization: token ${FORGEJO_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"body\":${comment_json}}" \
+              "${api_url}/repos/${owner}/${repo}/issues/${pr_number}/comments"
+          fi

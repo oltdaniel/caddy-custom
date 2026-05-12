@@ -1,0 +1,86 @@
+# nfpm configuration template — values in ${PKG_*} placeholders are substituted by build.sh.
+
+name: "${PKG_NAME}"
+arch: "${PKG_ARCH}"
+platform: "linux"
+version: "${PKG_VERSION}"
+# Release is fixed at 1 — uniqueness across rebuilds is encoded into the
+# version itself via caddy.version_suffix. apk requires this to be digits.
+release: "1"
+section: "${PKG_SECTION}"
+priority: "${PKG_PRIORITY}"
+maintainer: "${PKG_MAINTAINER}"
+description: |
+${PKG_DESCRIPTION_INDENTED}
+vendor: "${PKG_VENDOR}"
+homepage: "${PKG_HOMEPAGE}"
+license: "${PKG_LICENSE}"
+
+provides:
+  - webserver
+
+contents:
+  # Binary
+  - src: ${BIN_PATH}
+    dst: /usr/bin/caddy
+    file_info:
+      mode: 0755
+
+  # Default Caddyfile
+  - src: ./dist/caddy-dist/config/Caddyfile
+    dst: /etc/caddy/Caddyfile
+    type: config|noreplace
+    file_info:
+      mode: 0644
+
+  # Welcome page
+  - src: ./dist/caddy-dist/welcome/index.html
+    dst: /usr/share/caddy/index.html
+    file_info:
+      mode: 0644
+
+  # Empty data dir
+  - dst: /var/lib/caddy
+    type: dir
+    file_info:
+      mode: 0750
+      owner: caddy
+      group: caddy
+
+  # systemd units (deb only — packager override drops these for apk)
+  - src: ./dist/caddy-dist/init/caddy.service
+    dst: /lib/systemd/system/caddy.service
+    file_info:
+      mode: 0644
+    packager: deb
+  - src: ./dist/caddy-dist/init/caddy-api.service
+    dst: /lib/systemd/system/caddy-api.service
+    file_info:
+      mode: 0644
+    packager: deb
+  - src: ./dist/caddy-dist/init/caddy.sysusers
+    dst: /usr/lib/sysusers.d/caddy.conf
+    file_info:
+      mode: 0644
+    packager: deb
+
+  # OpenRC init script (apk only)
+  - src: ./dist/aports/caddy.initd
+    dst: /etc/init.d/caddy
+    file_info:
+      mode: 0755
+    packager: apk
+
+overrides:
+  deb:
+    depends:
+${DEPENDS_DEB}
+    scripts:
+      postinstall: ./dist/caddy-dist/scripts/postinstall.sh
+      preremove: ./dist/caddy-dist/scripts/preremove.sh
+      postremove: ./dist/caddy-dist/scripts/postremove.sh
+  apk:
+    depends:
+${DEPENDS_APK}
+    scripts:
+      preinstall: ./dist/aports/caddy.pre-install

@@ -1,0 +1,155 @@
+name: Template sync
+
+on:
+  schedule:
+    # Weekly — Mondays at 09:00 UTC.
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: template-sync
+  cancel-in-progress: false
+
+jobs:
+  template-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Read template config
+        id: cfg
+        run: |
+          enabled=$(yq -r '.template.enabled // false' build.yaml)
+          tpl_url=$(yq -r '.template.forgejo.url // ""' build.yaml)
+          tpl_repo=$(yq -r '.template.forgejo.repo // ""' build.yaml)
+          tpl_branch=$(yq -r '.template.forgejo.branch // "main"' build.yaml)
+          sync_branch=$(yq -r '.template.branch_name // "template-sync"' build.yaml)
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          echo "tpl_url=$tpl_url" >> "$GITHUB_OUTPUT"
+          echo "tpl_repo=$tpl_repo" >> "$GITHUB_OUTPUT"
+          echo "tpl_branch=$tpl_branch" >> "$GITHUB_OUTPUT"
+          echo "sync_branch=$sync_branch" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if disabled or we ARE the template
+        id: gate
+        env:
+          ENABLED: ${{ steps.cfg.outputs.enabled }}
+          TPL_URL: ${{ steps.cfg.outputs.tpl_url }}
+          TPL_REPO: ${{ steps.cfg.outputs.tpl_repo }}
+        run: |
+          if [[ "$ENABLED" != "true" ]]; then
+            echo "Template sync disabled in build.yaml."
+            echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [[ -z "$TPL_URL" || -z "$TPL_REPO" ]]; then
+            echo "template.forgejo.url or .repo is empty — nothing to sync from."
+            echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # GITHUB_REPOSITORY is populated by Forgejo Actions in GitHub
+          # compat mode. Case-insensitive to match Forgejo's resolver.
+          if [[ "${GITHUB_REPOSITORY,,}" == "${TPL_REPO,,}" ]]; then
+            echo "This repo IS the Forgejo template mirror (${GITHUB_REPOSITORY}); skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install missing packages
+        run: sudo apt-get update && sudo apt-get install rsync -y
+
+      - name: Clone upstream template mirror
+        if: steps.gate.outputs.run == 'true'
+        env:
+          TPL_URL: ${{ steps.cfg.outputs.tpl_url }}
+          TPL_REPO: ${{ steps.cfg.outputs.tpl_repo }}
+          TPL_BRANCH: ${{ steps.cfg.outputs.tpl_branch }}
+        run: |
+          git clone --depth=1 --branch="$TPL_BRANCH" \
+            "${TPL_URL}/${TPL_REPO}.git" /tmp/template
+          rm -rf /tmp/template/.git
+
+      - name: Mirror template into working tree
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          # Same denylist as the GitHub workflow — keep parity so both
+          # provider PRs produce identical diffs.
+          rsync -a --delete \
+            --exclude=/.git \
+            --exclude=/build.yaml \
+            --exclude=/README.md \
+            --exclude=/dist \
+            --exclude=/lib/tools.pins.sh \
+            /tmp/template/ ./
+
+      - name: Detect drift
+        if: steps.gate.outputs.run == 'true'
+        id: drift
+        run: |
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "No drift from template."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Template sync"
+              echo ""
+              echo "Drift detected against \`${{ steps.cfg.outputs.tpl_repo }}@${{ steps.cfg.outputs.tpl_branch }}\` (Forgejo mirror)."
+              echo ""
+              echo "### Files changed"
+              echo ""
+              echo '```'
+              git status --short
+              echo '```'
+            } > /tmp/report.md
+          fi
+
+      - name: Open or refresh sync PR
+        if: steps.gate.outputs.run == 'true' && steps.drift.outputs.changed == 'true'
+        env:
+          BRANCH: ${{ steps.cfg.outputs.sync_branch }}
+          FORGEJO_URL: ${{ vars.FORGEJO_URL || 'https://codeberg.org' }}
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          git config user.name "forgejo-actions"
+          git config user.email "noreply@forgejo.org"
+          # Reset the sync branch from main on every run so the PR diff is
+          # always (current main) -> (single template-sync commit) — no
+          # accumulated history, no merge conflicts when main moves on.
+          git checkout -B "$BRANCH"
+          git add -A
+          git commit -m "chore(template-sync): pull from ${{ steps.cfg.outputs.tpl_repo }}@${{ steps.cfg.outputs.tpl_branch }}"
+          git push origin "$BRANCH" --force
+
+          owner="${GITHUB_REPOSITORY%/*}"
+          repo="${GITHUB_REPOSITORY#*/}"
+          api_url="${FORGEJO_URL}/api/v1"
+          body_json=$(jq -Rs . < /tmp/report.md)
+
+          pr_response=$(curl -s "${api_url}/repos/${owner}/${repo}/pulls?state=open" \
+            -H "Authorization: token ${FORGEJO_TOKEN}")
+          pr_number=$(echo "${pr_response}" | yq -p=json -r \
+            "((. | select(tag == \"!!seq\")) // []) | [.[] | select(.head.ref == \"${BRANCH}\")] | .[0].number // \"\"")
+
+          if [[ -z "$pr_number" ]]; then
+            curl -s -X POST \
+              -H "Authorization: token ${FORGEJO_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"title\":\"Template sync from ${{ steps.cfg.outputs.tpl_repo }}\",\"body\":${body_json},\"base\":\"main\",\"head\":\"${owner}:${BRANCH}\"}" \
+              "${api_url}/repos/${owner}/${repo}/pulls"
+          else
+            curl -s -X PATCH \
+              -H "Authorization: token ${FORGEJO_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"body\":${body_json}}" \
+              "${api_url}/repos/${owner}/${repo}/pulls/${pr_number}"
+            comment_body="Refreshed at $(date -u +%Y-%m-%dT%H:%MZ). Branch force-pushed; current report is in the PR description above."
+            comment_json=$(printf '%s' "$comment_body" | jq -Rs .)
+            curl -s -X POST \
+              -H "Authorization: token ${FORGEJO_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"body\":${comment_json}}" \
+              "${api_url}/repos/${owner}/${repo}/issues/${pr_number}/comments"
+          fi
