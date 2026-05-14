@@ -74,30 +74,33 @@ providers, so re-running a workflow on the same commit is a no-op.
 
 ### Container image naming
 
+The host and owner are auto-detected from the CI runner env —
+`FORGEJO_SERVER_URL` + `FORGEJO_REPOSITORY` for the forgejo backend
+(with `GITHUB_*` aliases as a fallback for older runners), and
+`GITHUB_REPOSITORY` for the github backend. Export manually for local
+runs — see [below](#running-releasesh-locally).
+
 | Backend | Image URL |
 |-|-|
-| forgejo | `<forgejo-host>/<release.forgejo.owner>/<docker.image>` |
-| github  | `ghcr.io/<release.github.owner-lowercased>/<release.github.container_image \|\| docker.image>` |
+| forgejo | `<forgejo-host>/<owner>/<docker.image>` |
+| github  | `ghcr.io/<owner-lowercased>/<repo>/<release.github.container_subpackage>` if set, else `ghcr.io/<owner-lowercased>/<docker.image>` |
 
-On GitHub, `container_image` is the whole path after the owner and may
-be a single name or `/`-separated segments. Both forms are valid:
+On GitHub, `release.github.container_subpackage` is optional and names
+a sub-package under the repo. The repo prefix is added automatically:
 
-| `container_image` | Resulting URL |
+| `release.github.container_subpackage` | Resulting URL |
 |-|-|
-| `caddy-custom` | `ghcr.io/oltdaniel/caddy-custom` |
-| `caddy-custom/server`  | `ghcr.io/oltdaniel/caddy-custom/server`|
+| unset (defaults to `docker.image`) | `ghcr.io/oltdaniel/caddy-custom` |
+| `server` | `ghcr.io/oltdaniel/caddy-custom/server` |
 
-When the leading segment matches a repo under the same owner, GitHub
-auto-links the package to that repo (visibility on the repo page,
-permissions inheritance). So the common patterns are:
+Both forms are auto-linked to the repo (visibility on the repo page,
+permissions inheritance) — the default because `docker.image` matches
+the repo name; the sub-package form because GitHub matches its leading
+segment to a repo under the same owner. The choice is just:
 
-- A top-level package whose name happens to be a repo (e.g.
-  `caddy-custom` with repo `oltdaniel/caddy-custom`) — auto-linked.
-- A repo-scoped package (e.g. `caddy-custom/server`) — auto-linked to
-  the `caddy-custom` repo as a sub-package called `server`.
-
-The `release.github.repo` field (used for the Release page) is
-independent — it doesn't constrain where the image lives.
+- Default: a top-level package named after `docker.image`.
+- Sub-package: set `container_subpackage` to anything else (e.g.
+  `server`) to publish under `ghcr.io/<owner>/<repo>/...`.
 
 ### Token scopes
 
@@ -328,15 +331,50 @@ knobs:
 ./build.sh deb apk # nfpm packages into ./out/packages/
 ./build.sh docker # local Docker image
 ./build.sh clean # rm -rf ./out/
-
-./release.sh check # is this pkg_version already published?
-RELEASE_PROVIDER=github ./release.sh check # ask the other backend
-./release.sh binary deb # publish only those targets
 ```
 
 `build.sh` and `release.sh` are intentionally independent. There is no
 combined entry point — CI workflows orchestrate the two-step flow
 explicitly.
+
+### Running release.sh locally
+
+In CI, the runner auto-populates the host + `owner/repo` env vars, so
+`release.sh` knows where to publish without any config:
+
+- Forgejo Actions (v7+ runner) sets [`FORGEJO_SERVER_URL` and
+  `FORGEJO_REPOSITORY`][forgejo-env], plus the `GITHUB_*` aliases for
+  GitHub Actions compatibility. The forgejo backend prefers the
+  `FORGEJO_*` names and falls back to `GITHUB_*`.
+- GitHub Actions sets `GITHUB_REPOSITORY`. (The host is always
+  `api.github.com`, so no server-URL var is needed.)
+
+[forgejo-env]: https://forgejo.org/docs/next/user/actions/reference/#env-1
+
+Outside CI those env vars are unset, so `release.sh` will refuse to run
+unless you export them yourself:
+
+```sh
+# Forgejo (e.g. publishing to Codeberg)
+FORGEJO_SERVER_URL=https://codeberg.org \
+FORGEJO_REPOSITORY=oltdaniel/caddy-custom \
+FORGEJO_TOKEN=... \
+  ./release.sh check                        # is this pkg_version published?
+
+FORGEJO_SERVER_URL=https://codeberg.org \
+FORGEJO_REPOSITORY=oltdaniel/caddy-custom \
+FORGEJO_TOKEN=... \
+  ./release.sh binary deb                   # publish only those targets
+
+# GitHub (no server-URL var — host is api.github.com)
+GITHUB_REPOSITORY=oltdaniel/caddy-custom \
+GITHUB_TOKEN=... RELEASE_PROVIDER=github \
+  ./release.sh check
+```
+
+For just `release.sh check` against a public repo/registry, the token
+can be omitted (read-only HTTP is unauthenticated). The host and
+`owner/repo` vars are still required so the script knows what to query.
 
 ## Tests
 

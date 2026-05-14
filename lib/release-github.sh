@@ -5,28 +5,20 @@
 # Requires GITHUB_TOKEN with `contents: write` (Releases) and, for docker,
 # `packages: write` (ghcr).
 #
-# Owner/repo are read from .release.github.{owner,repo} in build.yaml; if
-# either is empty they fall back to GITHUB_REPOSITORY (`owner/repo`), which
-# the GitHub Actions runner sets automatically.
+# Owner and repo come from GITHUB_REPOSITORY ("owner/repo"), set
+# automatically by the GitHub Actions runner. For local runs, export
+# it manually — see README.
 
 github_owner() {
-  local v
-  v="$(cfg '.release.github.owner')"
-  if [[ -z "${v}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
-    v="${GITHUB_REPOSITORY%%/*}"
-  fi
-  [[ -n "${v}" ]] || die "release.github.owner is empty (and GITHUB_REPOSITORY is unset)"
-  printf '%s' "${v}"
+  local r="${GITHUB_REPOSITORY:-}"
+  [[ -n "${r}" ]] || die "GITHUB_REPOSITORY is unset (owner/repo; auto-provided in CI, export manually for local runs)"
+  printf '%s' "${r%%/*}"
 }
 
 github_repo() {
-  local v
-  v="$(cfg '.release.github.repo')"
-  if [[ -z "${v}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
-    v="${GITHUB_REPOSITORY##*/}"
-  fi
-  [[ -n "${v}" ]] || die "release.github.repo is empty (and GITHUB_REPOSITORY is unset)"
-  printf '%s' "${v}"
+  local r="${GITHUB_REPOSITORY:-}"
+  [[ -n "${r}" ]] || die "GITHUB_REPOSITORY is unset (owner/repo; auto-provided in CI, export manually for local runs)"
+  printf '%s' "${r##*/}"
 }
 
 github_api() {
@@ -203,19 +195,24 @@ push_docker() {
   docker buildx version >/dev/null 2>&1 || die "docker buildx is required"
   require_github_token
 
-  local owner host base_image image_name caddy_version pkg_ver owner_lc
+  local owner repo host base_image subpkg image_path caddy_version pkg_ver owner_lc
   owner="$(github_owner)"
+  repo="$(github_repo)"
   host="ghcr.io"
   base_image="$(cfg '.docker.base_image')"
-  image_name="$(cfg '.release.github.container_image')"
-  [[ -z "${image_name}" ]] && image_name="$(cfg '.docker.image')"
+  subpkg="$(cfg '.release.github.container_subpackage')"
+  if [[ -n "${subpkg}" ]]; then
+    image_path="${repo}/${subpkg}"
+  else
+    image_path="$(cfg '.docker.image')"
+    [[ -n "${image_path}" ]] || die "docker.image is empty"
+  fi
   caddy_version="$(caddy_version)"
   pkg_ver="$(pkg_version)"
-  [[ -n "${image_name}" ]] || die "release.github.container_image / docker.image is empty"
 
   # ghcr requires the namespace to be lowercase.
   owner_lc="$(printf '%s' "${owner}" | tr '[:upper:]' '[:lower:]')"
-  local remote_image="${host}/${owner_lc}/${image_name}"
+  local remote_image="${host}/${owner_lc}/${image_path}"
 
   local ctx="${OUT_DIR}/docker-context"
   [[ -d "${ctx}" ]] || die "missing ${ctx} — run './build.sh binary docker' first"

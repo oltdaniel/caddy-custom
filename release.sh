@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # Upload built artifacts to a package backend (Forgejo or GitHub).
 #
-# Usage:
+# Usage (in CI, the runner injects the host + owner/repo env vars):
 #   FORGEJO_TOKEN=... ./release.sh [target ...]                 # provider=forgejo (default)
 #   GITHUB_TOKEN=... RELEASE_PROVIDER=github ./release.sh [...] # provider=github
+#
+# For local runs, export the same env vars manually:
+#   FORGEJO_SERVER_URL=https://codeberg.org \
+#   FORGEJO_REPOSITORY=owner/repo \
+#   FORGEJO_TOKEN=... ./release.sh [target ...]
+#   GITHUB_REPOSITORY=owner/repo \
+#   GITHUB_TOKEN=... RELEASE_PROVIDER=github ./release.sh [...]
 #
 # The active provider is selected (in order):
 #   1. RELEASE_PROVIDER env var

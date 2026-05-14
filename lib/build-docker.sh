@@ -5,13 +5,12 @@ build_docker() {
   command -v docker >/dev/null 2>&1 || die "docker required for the docker target"
   docker buildx version >/dev/null 2>&1 || die "docker buildx is required"
 
-  local image base_image caddy_version pkg_ver multiarch push
+  local image base_image caddy_version pkg_ver multiarch
   image="$(cfg '.docker.image')"
   base_image="$(cfg '.docker.base_image')"
   caddy_version="$(caddy_version)"
   pkg_ver="$(pkg_version)"
   multiarch="$(cfg '.docker.multiarch_manifest')"
-  push="$(cfg '.docker.push')"
   [[ -z "${image}" ]] && die "docker.image is empty in build.yaml"
 
   # Collect platforms from architectures that declared docker_platform.
@@ -67,9 +66,7 @@ build_docker() {
     platform_csv="$(IFS=,; echo "${platforms[*]}")"
     log "building multi-arch image for: ${platform_csv}"
     local out_flag="--load"
-    if [[ "${push}" == "true" ]]; then
-      out_flag="--push"
-    elif [[ ${#platforms[@]} -gt 1 ]]; then
+    if [[ ${#platforms[@]} -gt 1 ]]; then
       # buildx can't --load multi-platform images into the daemon; export OCI tar.
       out_flag="--output=type=oci,dest=${OUT_DIR}/${image//\//_}-${pkg_ver}.oci.tar"
       log "  (multi-arch image cannot be loaded into local docker; writing OCI archive)"

@@ -84,8 +84,6 @@ docker:
   # Tags appended to the image name. The Caddy version is always added too.
   tags:
     - "latest"
-  # If true, push the resulting manifest to a registry (requires login).
-  push: false
   # If true, build a multi-arch manifest. If false, build per-arch local images
   # tagged with the architecture suffix.
   multiarch_manifest: true
@@ -163,6 +161,12 @@ dist:
 # package registries (generic/debian/alpine/container); the github backend
 # additionally pushes the docker image to ghcr.io.
 #
+# The Forgejo instance URL, owner, and repo are auto-detected from the CI
+# runner env (FORGEJO_SERVER_URL + FORGEJO_REPOSITORY, with GITHUB_* aliases
+# as a fallback for older runners). Same for the GitHub owner/repo via
+# GITHUB_REPOSITORY. For local invocations, the env vars must be exported
+# manually — see README "Running release.sh locally".
+#
 # Token scopes:
 #   forgejo (FORGEJO_TOKEN): write:package + write:repository
 #   github  (GITHUB_TOKEN):  contents: write + packages: write
@@ -173,40 +177,19 @@ release:
   # Default backend when RELEASE_PROVIDER env var is unset. Either provider
   # can be driven from the corresponding workflow regardless of this default.
   provider: "forgejo"
-  forgejo:
-    # Base URL of the Forgejo instance (no trailing slash).
-    url: "https://codeberg.org"
-    # Owner (user or organisation) under which packages and releases live.
-    owner: "oltdaniel"
-    # Repo name for the Forgejo Release that artifacts are attached to.
-    # Leave empty to fall back to the GITHUB_REPOSITORY env var (Forgejo
-    # Actions populates this for GitHub Actions compatibility).
-    repo: "caddy-custom"
   github:
-    # Owner / repo for the GitHub Release that artifacts are attached to.
-    # Leave both empty to fall back to the GITHUB_REPOSITORY env var
-    # (auto-set by GitHub Actions to "owner/repo").
-    owner: "oltdaniel"
-    repo: "caddy-custom"
-    # Image path pushed to ghcr.io. Defaults to docker.image when empty.
+    # Optional sub-package name under the auto-detected repo. When unset
+    # the image is published as a top-level package named after
+    # docker.image. When set, the repo prefix is added automatically
+    # (the only form GitHub will auto-link to the repo).
     #
-    # Resulting URL: ghcr.io/<owner-lowercased>/<container_image>
-    #
-    # `container_image` is the entire path after the owner — it can be a
-    # single name or several "/"-separated segments. Examples (with
-    # owner "oltdaniel"):
-    #   "caddy-custom"               -> ghcr.io/oltdaniel/caddy-custom
-    #   "caddy-custom/server"        -> ghcr.io/oltdaniel/caddy-custom/server
-    #
-    # When the leading segment matches a repo under the same owner,
-    # GitHub auto-links the package to that repo (so it shows up on the
-    # repo page and inherits its visibility/permissions). The common
-    # conventions are therefore:
-    #   - top-level package whose name happens to match a repo, e.g.
-    #     "caddy-custom" with repo oltdaniel/caddy-custom -> auto-linked
-    #   - repo-scoped package, e.g. "caddy-custom/server" -> auto-linked
-    #     to the caddy-custom repo as a sub-package called "server"
-    container_image: "caddy-custom/caddy"
+    # Resulting URL (owner "oltdaniel", repo "caddy-custom", docker.image
+    # "caddy-custom"):
+    #   unset      -> ghcr.io/oltdaniel/caddy-custom
+    #                 (top-level package, auto-linked since name == repo)
+    #   "server"   -> ghcr.io/oltdaniel/caddy-custom/server
+    #                 (sub-package under the caddy-custom repo)
+    container_subpackage: "caddy"
   # Generic registry (Forgejo only) — per-arch binary tarballs from out/.
   generic:
     package_name: "caddy-custom"

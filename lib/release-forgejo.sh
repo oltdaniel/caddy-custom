@@ -14,9 +14,14 @@
 #   write:repository — release create / asset upload
 # (read:package + read:repository are sufficient for `release.sh check`.)
 
+# Forgejo instance URL, owner, and repo are auto-detected from the runner
+# env: FORGEJO_SERVER_URL holds the instance URL, FORGEJO_REPOSITORY is
+# "owner/repo" (Forgejo Runner v7+). GITHUB_* aliases are accepted as a
+# fallback so older runners and the Gitea-compat surface keep working.
+# For local runs, export them manually — see README.
 forgejo_url() {
-  local u
-  u="$(cfg '.release.forgejo.url')"
+  local u="${FORGEJO_SERVER_URL:-${GITHUB_SERVER_URL:-}}"
+  [[ -n "${u}" ]] || die "FORGEJO_SERVER_URL is unset (Forgejo instance URL; auto-provided in CI, export manually for local runs)"
   printf '%s' "${u%/}"
 }
 
@@ -31,23 +36,16 @@ require_forgejo_token() {
   [[ -n "${FORGEJO_TOKEN:-}" ]] || die "FORGEJO_TOKEN is not set"
 }
 
-require_forgejo_owner() {
-  local o; o="$(cfg '.release.forgejo.owner')"
-  [[ -n "${o}" ]] || die "release.forgejo.owner is empty in build.yaml"
-  printf '%s' "${o}"
+forgejo_owner() {
+  local r="${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
+  [[ -n "${r}" ]] || die "FORGEJO_REPOSITORY is unset (owner/repo; auto-provided in CI, export manually for local runs)"
+  printf '%s' "${r%%/*}"
 }
 
-# Repo name for the Releases API. Falls back to GITHUB_REPOSITORY's repo
-# segment, which Forgejo Actions populates automatically (Gitea/GitHub
-# Actions compatibility).
 forgejo_repo() {
-  local v
-  v="$(cfg '.release.forgejo.repo')"
-  if [[ -z "${v}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
-    v="${GITHUB_REPOSITORY##*/}"
-  fi
-  [[ -n "${v}" ]] || die "release.forgejo.repo is empty (and GITHUB_REPOSITORY is unset)"
-  printf '%s' "${v}"
+  local r="${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
+  [[ -n "${r}" ]] || die "FORGEJO_REPOSITORY is unset (owner/repo; auto-provided in CI, export manually for local runs)"
+  printf '%s' "${r##*/}"
 }
 
 # curl_put uploads a file via PUT with token auth. Used for the package
@@ -72,7 +70,7 @@ forgejo_json_get() {
 forgejo_ensure_release() {
   local tag="$1"
   local owner repo url tmp status body id
-  owner="$(require_forgejo_owner)"
+  owner="$(forgejo_owner)"
   repo="$(forgejo_repo)"
   url="$(forgejo_url)"
   tmp="$(mktemp)"
@@ -113,7 +111,7 @@ forgejo_upload_attachment() {
   local rel_id="$1" file="$2"
   local fname owner repo url tmp existing_id
   fname="$(basename "${file}")"
-  owner="$(require_forgejo_owner)"
+  owner="$(forgejo_owner)"
   repo="$(forgejo_repo)"
   url="$(forgejo_url)"
 
@@ -163,7 +161,7 @@ forgejo_attach_to_release() {
 # the build can be skipped. Auth is optional for public repos.
 check_published() {
   local owner repo url pkg_ver tag status
-  owner="$(require_forgejo_owner)"
+  owner="$(forgejo_owner)"
   repo="$(forgejo_repo)"
   url="$(forgejo_url)"
   pkg_ver="$(pkg_version)"
@@ -184,7 +182,7 @@ check_published() {
 upload_binary() {
   require_forgejo_token
   local owner url pkg_ver pkg_name file fname
-  owner="$(require_forgejo_owner)"
+  owner="$(forgejo_owner)"
   url="$(forgejo_url)"
   pkg_ver="$(pkg_version)"
   pkg_name="$(cfg '.release.generic.package_name')"
@@ -208,7 +206,7 @@ upload_binary() {
 upload_deb() {
   require_forgejo_token
   local owner url distribution component pkg_ver file fname
-  owner="$(require_forgejo_owner)"
+  owner="$(forgejo_owner)"
   url="$(forgejo_url)"
   distribution="$(cfg '.release.deb.distribution')"
   component="$(cfg '.release.deb.component')"
@@ -234,7 +232,7 @@ upload_deb() {
 upload_apk() {
   require_forgejo_token
   local owner url branch repository pkg_ver file fname
-  owner="$(require_forgejo_owner)"
+  owner="$(forgejo_owner)"
   url="$(forgejo_url)"
   branch="$(cfg '.release.apk.branch')"
   repository="$(cfg '.release.apk.repository')"
@@ -263,7 +261,7 @@ push_docker() {
   docker buildx version >/dev/null 2>&1 || die "docker buildx is required"
 
   local owner host base_image image_name caddy_version pkg_ver
-  owner="$(require_forgejo_owner)"
+  owner="$(forgejo_owner)"
   host="$(forgejo_host)"
   base_image="$(cfg '.docker.base_image')"
   image_name="$(cfg '.docker.image')"
