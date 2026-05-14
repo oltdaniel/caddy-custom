@@ -101,10 +101,10 @@ independent — it doesn't constrain where the image lives.
 
 ### Token scopes
 
-| Provider | Env var | Required scopes |
-|-|-|-|
-| forgejo | `FORGEJO_TOKEN` | `write:package` (package + container registries) **and** `write:repository` (releases + asset uploads) |
-| github | `GITHUB_TOKEN` | `contents: write` (releases) **and** `packages: write` (ghcr) |
+| Provider | Env var (read by scripts) | CI secret name | Required scopes |
+|-|-|-|-|
+| forgejo | `FORGEJO_TOKEN` | `RELEASE_TOKEN` (Forgejo reserves the `FORGEJO_TOKEN` name) | `write:package` (package + container registries) **and** `write:repository` (releases + asset uploads) |
+| github | `GITHUB_TOKEN` | `GITHUB_TOKEN` (auto-injected) | `contents: write` (releases) **and** `packages: write` (ghcr) |
 
 For just `release.sh check`, read scopes (`read:package` +
 `read:repository` on Forgejo; default `GITHUB_TOKEN` on GitHub) are
@@ -114,7 +114,10 @@ registry/repo is publicly readable.
 On the GitHub workflow, `GITHUB_TOKEN` is auto-provided; the
 `permissions` block at the top of the workflow declares the two scopes.
 On the Forgejo workflow, the token is supplied via the `RELEASE_TOKEN`
-secret.
+secret — Forgejo reserves `FORGEJO_TOKEN` for its own auto-injected
+runner token, so user-defined secrets can't use that name. Each
+workflow step maps `RELEASE_TOKEN` onto the `FORGEJO_TOKEN` env var
+that the scripts and API calls read.
 
 ## Installing & upgrading
 

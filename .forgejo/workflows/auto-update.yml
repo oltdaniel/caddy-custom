@@ -67,7 +67,7 @@ jobs:
         env:
           BRANCH: ${{ steps.mode.outputs.branch }}
           FORGEJO_URL: ${{ vars.FORGEJO_URL || 'https://codeberg.org' }}
-          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           git config user.name "forgejo-actions"
           git config user.email "noreply@forgejo.org"
