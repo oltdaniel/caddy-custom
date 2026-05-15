@@ -110,7 +110,7 @@ jobs:
         if: steps.gate.outputs.run == 'true' && steps.drift.outputs.changed == 'true'
         env:
           BRANCH: ${{ steps.cfg.outputs.sync_branch }}
-          FORGEJO_URL: ${{ vars.FORGEJO_URL || 'https://codeberg.org' }}
+          FORGEJO_URL: ${{ forgejo.server_url }}
           FORGEJO_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           git config user.name "forgejo-actions"
