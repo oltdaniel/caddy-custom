@@ -12,7 +12,7 @@ caddy:
   # package version (deb / apk / Docker tag) needs to be a sortable semver.
   # Pin an explicit version if reproducibility matters; "latest" can move
   # between successive workflow runs.
-  version: "2.11.3"
+  version: "2.11.4"
   # Suffix folded into the *package* version (not the upstream version
   # consumed by xcaddy), so the same Caddy rebuilt with different plugins
   # gets a distinct package/image version. Appended after a dot — e.g.
