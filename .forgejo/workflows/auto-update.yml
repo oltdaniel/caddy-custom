@@ -59,6 +59,10 @@ jobs:
           git config user.name "forgejo-actions"
           git config user.email "noreply@forgejo.org"
           git add build.yaml lib/tools.pins.sh dist
+          if git diff --cached --quiet; then
+            echo "No staged changes — already up to date."
+            exit 0
+          fi
           git commit -m "chore(auto-update): pin bumps (${{ steps.kind.outputs.kind }})"
           git push origin HEAD:main
 
@@ -76,6 +80,10 @@ jobs:
           # history, no merge conflicts when main moves on.
           git checkout -B "$BRANCH"
           git add build.yaml lib/tools.pins.sh dist
+          if git diff --cached --quiet; then
+            echo "No staged changes — branch already matches main; skipping PR update."
+            exit 0
+          fi
           git commit -m "chore(auto-update): pin bumps (${{ steps.kind.outputs.kind }})"
           git push origin "$BRANCH" --force
 
