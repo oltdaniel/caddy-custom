@@ -24,12 +24,13 @@ jobs:
         id: cfg
         run: |
           enabled=$(yq -r '.template.enabled // false' build.yaml)
-          tpl_url=$(yq -r '.template.forgejo.url // ""' build.yaml)
-          tpl_repo=$(yq -r '.template.forgejo.repo // ""' build.yaml)
-          tpl_branch=$(yq -r '.template.forgejo.branch // "main"' build.yaml)
+          # Single canonical source shared with the GitHub workflow.
+          tpl_url=$(yq -r '.template.url // "https://github.com"' build.yaml)
+          tpl_repo=$(yq -r '.template.repo // ""' build.yaml)
+          tpl_branch=$(yq -r '.template.branch // "main"' build.yaml)
           sync_branch=$(yq -r '.template.branch_name // "template-sync"' build.yaml)
           echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
-          echo "tpl_url=$tpl_url" >> "$GITHUB_OUTPUT"
+          echo "tpl_clone=${tpl_url%/}/${tpl_repo}.git" >> "$GITHUB_OUTPUT"
           echo "tpl_repo=$tpl_repo" >> "$GITHUB_OUTPUT"
           echo "tpl_branch=$tpl_branch" >> "$GITHUB_OUTPUT"
           echo "sync_branch=$sync_branch" >> "$GITHUB_OUTPUT"
@@ -38,21 +39,20 @@ jobs:
         id: gate
         env:
           ENABLED: ${{ steps.cfg.outputs.enabled }}
-          TPL_URL: ${{ steps.cfg.outputs.tpl_url }}
           TPL_REPO: ${{ steps.cfg.outputs.tpl_repo }}
         run: |
           if [[ "$ENABLED" != "true" ]]; then
             echo "Template sync disabled in build.yaml."
             echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if [[ -z "$TPL_URL" || -z "$TPL_REPO" ]]; then
-            echo "template.forgejo.url or .repo is empty — nothing to sync from."
+          if [[ -z "$TPL_REPO" ]]; then
+            echo "template repo is empty — nothing to sync from."
             echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           # GITHUB_REPOSITORY is populated by Forgejo Actions in GitHub
           # compat mode. Case-insensitive to match Forgejo's resolver.
           if [[ "${GITHUB_REPOSITORY,,}" == "${TPL_REPO,,}" ]]; then
-            echo "This repo IS the Forgejo template mirror (${GITHUB_REPOSITORY}); skipping."
+            echo "This repo IS the template (${GITHUB_REPOSITORY}); skipping."
             echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           echo "run=true" >> "$GITHUB_OUTPUT"
@@ -60,15 +60,14 @@ jobs:
       - name: Install missing packages
         run: sudo apt-get update && sudo apt-get install rsync -y
 
-      - name: Clone upstream template mirror
+      - name: Clone upstream template
         if: steps.gate.outputs.run == 'true'
         env:
-          TPL_URL: ${{ steps.cfg.outputs.tpl_url }}
-          TPL_REPO: ${{ steps.cfg.outputs.tpl_repo }}
+          TPL_CLONE: ${{ steps.cfg.outputs.tpl_clone }}
           TPL_BRANCH: ${{ steps.cfg.outputs.tpl_branch }}
         run: |
           git clone --depth=1 --branch="$TPL_BRANCH" \
-            "${TPL_URL}/${TPL_REPO}.git" /tmp/template
+            "$TPL_CLONE" /tmp/template
           rm -rf /tmp/template/.git
 
       - name: Mirror template into working tree
@@ -96,7 +95,7 @@ jobs:
             {
               echo "## Template sync"
               echo ""
-              echo "Drift detected against \`${{ steps.cfg.outputs.tpl_repo }}@${{ steps.cfg.outputs.tpl_branch }}\` (Forgejo mirror)."
+              echo "Drift detected against \`${{ steps.cfg.outputs.tpl_repo }}@${{ steps.cfg.outputs.tpl_branch }}\`."
               echo ""
               echo "### Files changed"
               echo ""

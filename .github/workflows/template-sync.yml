@@ -29,10 +29,13 @@ jobs:
         id: cfg
         run: |
           enabled=$(yq -r '.template.enabled // false' build.yaml)
-          repo=$(yq -r '.template.github.repo // ""' build.yaml)
-          branch=$(yq -r '.template.github.branch // "main"' build.yaml)
+          # Single canonical source shared with the Forgejo workflow.
+          tpl_url=$(yq -r '.template.url // "https://github.com"' build.yaml)
+          repo=$(yq -r '.template.repo // ""' build.yaml)
+          branch=$(yq -r '.template.branch // "main"' build.yaml)
           sync_branch=$(yq -r '.template.branch_name // "template-sync"' build.yaml)
           echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          echo "clone=${tpl_url%/}/${repo}.git" >> "$GITHUB_OUTPUT"
           echo "repo=$repo" >> "$GITHUB_OUTPUT"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           echo "sync_branch=$sync_branch" >> "$GITHUB_OUTPUT"
@@ -48,7 +51,7 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           if [[ -z "$TPL_REPO" ]]; then
-            echo "template.github.repo is empty — nothing to sync from."
+            echo "template.repo is empty — nothing to sync from."
             echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           # Case-insensitive match: GitHub owner/repo names are not
@@ -65,11 +68,11 @@ jobs:
       - name: Clone upstream template
         if: steps.gate.outputs.run == 'true'
         env:
-          TPL_REPO: ${{ steps.cfg.outputs.repo }}
+          TPL_CLONE: ${{ steps.cfg.outputs.clone }}
           TPL_BRANCH: ${{ steps.cfg.outputs.branch }}
         run: |
           git clone --depth=1 --branch="$TPL_BRANCH" \
-            "https://github.com/${TPL_REPO}.git" /tmp/template
+            "$TPL_CLONE" /tmp/template
           rm -rf /tmp/template/.git
 
       - name: Mirror template into working tree

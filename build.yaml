@@ -102,20 +102,16 @@ docker:
 template:
   # Set to false to disable both template-sync workflows entirely.
   enabled: true
-  github:
-    # Upstream template repo on GitHub. Self-check: if GITHUB_REPOSITORY
-    # equals this value, the workflow exits without doing anything.
-    repo: "oltdaniel/caddy-custom"
-    branch: "main"
-  forgejo:
-    # Forgejo mirror of the GitHub template (set up via Forgejo's built-in
-    # repo mirroring). The Forgejo workflow pulls from here so the sync
-    # works on instances without GitHub egress. Set to your Forgejo
-    # instance URL (e.g. https://forgejo.example.com); left empty, the
-    # Forgejo template-sync workflow skips itself.
-    url: ""
-    repo: "oltdaniel/caddy-custom"
-    branch: "main"
+  # Canonical template source that BOTH the GitHub and Forgejo
+  # template-sync workflows pull from — the two never run on the same host,
+  # so a single source keeps them in lockstep. Defaults to the GitHub
+  # original; point url at a mirror (e.g. https://forgejo.example.com) only
+  # if a runner can't reach github.com. Self-check: if the current repo's
+  # owner/repo equals `repo`, the workflow exits without doing anything, so
+  # the canonical repo never syncs itself.
+  url: "https://github.com"
+  repo: "oltdaniel/caddy-custom"
+  branch: "main"
   # Branch used for the rolling sync PR. Force-pushed on every run so the
   # PR diff always reflects current upstream; intermediate states are
   # captured in PR comments.
