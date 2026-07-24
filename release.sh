@@ -6,7 +6,7 @@
 #   GITHUB_TOKEN=... RELEASE_PROVIDER=github ./release.sh [...] # provider=github
 #
 # For local runs, export the same env vars manually:
-#   FORGEJO_SERVER_URL=https://codeberg.org \
+#   FORGEJO_SERVER_URL=https://forgejo.example.com \
 #   FORGEJO_REPOSITORY=owner/repo \
 #   FORGEJO_TOKEN=... ./release.sh [target ...]
 #   GITHUB_REPOSITORY=owner/repo \

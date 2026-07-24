@@ -110,8 +110,10 @@ template:
   forgejo:
     # Forgejo mirror of the GitHub template (set up via Forgejo's built-in
     # repo mirroring). The Forgejo workflow pulls from here so the sync
-    # works on instances without GitHub egress.
-    url: "https://codeberg.org"
+    # works on instances without GitHub egress. Set to your Forgejo
+    # instance URL (e.g. https://forgejo.example.com); left empty, the
+    # Forgejo template-sync workflow skips itself.
+    url: ""
     repo: "oltdaniel/caddy-custom"
     branch: "main"
   # Branch used for the rolling sync PR. Force-pushed on every run so the

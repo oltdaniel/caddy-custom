@@ -126,7 +126,8 @@ that the scripts and API calls read.
 
 How to consume the published artifacts, by format. Examples use the
 values currently in [build.yaml](build.yaml) (forgejo host
-`codeberg.org`, owner `oltdaniel`, package name `caddy-custom`).
+`forgejo.example.com`, owner `oltdaniel`, package name `caddy-custom`).
+Substitute your own Forgejo instance host for `forgejo.example.com`.
 Substitute `<pkg_version>` with a real version (e.g. `2.11.0.20260512.42`)
 and swap `amd64` / `x86_64` for your architecture as needed.
 
@@ -135,7 +136,7 @@ and swap `amd64` / `x86_64` for your architecture as needed.
 Forgejo (generic registry):
 ```sh
 curl -fsSL -o caddy.tar.gz \
-  https://codeberg.org/api/packages/oltdaniel/generic/caddy-custom/<pkg_version>/caddy_<pkg_version>_linux_amd64.tar.gz
+  https://forgejo.example.com/api/packages/oltdaniel/generic/caddy-custom/<pkg_version>/caddy_<pkg_version>_linux_amd64.tar.gz
 tar -xzf caddy.tar.gz caddy
 sudo install -m 755 caddy /usr/local/bin/
 ```
@@ -156,9 +157,9 @@ is no package manager — the binary is just overwritten.
 Forgejo (debian registry, integrates with `apt`):
 ```sh
 sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://codeberg.org/api/packages/oltdaniel/debian/repository.key \
+curl -fsSL https://forgejo.example.com/api/packages/oltdaniel/debian/repository.key \
   | sudo gpg --dearmor -o /etc/apt/keyrings/caddy-custom.gpg
-echo "deb [signed-by=/etc/apt/keyrings/caddy-custom.gpg] https://codeberg.org/api/packages/oltdaniel/debian stable main" \
+echo "deb [signed-by=/etc/apt/keyrings/caddy-custom.gpg] https://forgejo.example.com/api/packages/oltdaniel/debian stable main" \
   | sudo tee /etc/apt/sources.list.d/caddy-custom.list
 sudo apt update
 sudo apt install caddy-custom
@@ -181,8 +182,8 @@ again — `apt` detects the higher version and upgrades in place.
 Forgejo (alpine registry, integrates with `apk`):
 ```sh
 curl -fsSL -o /etc/apk/keys/caddy-custom.rsa.pub \
-  https://codeberg.org/api/packages/oltdaniel/alpine/key
-echo "https://codeberg.org/api/packages/oltdaniel/alpine/v3/caddy-custom" \
+  https://forgejo.example.com/api/packages/oltdaniel/alpine/key
+echo "https://forgejo.example.com/api/packages/oltdaniel/alpine/v3/caddy-custom" \
   | sudo tee -a /etc/apk/repositories
 sudo apk update
 sudo apk add caddy-custom
@@ -218,7 +219,7 @@ isn't signed against any key in `/etc/apk/keys/`.
 
 Forgejo container registry:
 ```sh
-docker pull codeberg.org/oltdaniel/caddy-custom:latest
+docker pull forgejo.example.com/oltdaniel/caddy-custom:latest
 ```
 
 GitHub `ghcr.io`:
@@ -355,13 +356,13 @@ Outside CI those env vars are unset, so `release.sh` will refuse to run
 unless you export them yourself:
 
 ```sh
-# Forgejo (e.g. publishing to Codeberg)
-FORGEJO_SERVER_URL=https://codeberg.org \
+# Forgejo (point at your own instance)
+FORGEJO_SERVER_URL=https://forgejo.example.com \
 FORGEJO_REPOSITORY=oltdaniel/caddy-custom \
 FORGEJO_TOKEN=... \
   ./release.sh check                        # is this pkg_version published?
 
-FORGEJO_SERVER_URL=https://codeberg.org \
+FORGEJO_SERVER_URL=https://forgejo.example.com \
 FORGEJO_REPOSITORY=oltdaniel/caddy-custom \
 FORGEJO_TOKEN=... \
   ./release.sh binary deb                   # publish only those targets
